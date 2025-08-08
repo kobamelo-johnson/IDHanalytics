@@ -21,28 +21,22 @@ const searchBox = document.getElementById('search-box');
 const userTableBody = document.getElementById('user-table-body');
 const loadingIndicator = document.getElementById('loading-users');
 const kpiTotalUsers = document.getElementById('kpi-total-users');
+const downloadCsvBtn = document.getElementById('download-csv-btn');
 
 // --- GLOBAL STATE ---
 let allUsers = [];
+let currentlyDisplayedUsers = [];
 let completionRateChart, statusChart, funnelChart, dailyActivityChart, preferencePieChart;
 let isInitialLoad = true;
 
 // --- FUNNEL STAGES CONSTANT ---
 const FUNNEL_STAGES = [
-    'Preference Selected', 
-    'ID Number Entered', 
-    'Full Name Entered', 
-    'Email Address Entered', 
-    'Phone Number Entered', 
-    'Completed'
+    'ID Number Entered', 'Preference Selected', 
+    'Full Name Entered', 'Email Address Entered', 'Phone Number Entered', 'Completed'
 ];
 
 // --- MAIN REAL-TIME DATA LISTENER ---
-db.collection("users")
-  .orderBy("last_update_time", "desc")
-  .onSnapshot(snapshot => {
-    // THIS IS THE CRITICAL FIX.
-    // It now only includes documents where the ID is a number greater than 0.
+db.collection("users").orderBy("last_update_time", "desc").onSnapshot(snapshot => {
     allUsers = snapshot.docs
       .map(doc => ({ id: doc.id, ...doc.data() }))
       .filter(doc => parseInt(doc.id) > 0);
@@ -52,10 +46,10 @@ db.collection("users")
     renderAnalytics(allUsers);
     
     const currentSearch = searchBox.value;
-    const isFilterActive = currentSearch.startsWith("Filter:");
-    
-    if (isInitialLoad || !isFilterActive) {
+    if (isInitialLoad || !currentSearch.startsWith("Filter:")) {
         renderUserList(currentSearch ? filterUsers(currentSearch) : allUsers);
+    } else {
+        renderUserList(filterUsers(currentSearch));
     }
     isInitialLoad = false;
 
@@ -73,10 +67,7 @@ function renderAnalytics(users) {
     const inProgressUsersCount = totalUsers - completedUsersCount;
     const completionRate = totalUsers > 0 ? Math.round((completedUsersCount / totalUsers) * 100) : 0;
     
-    const stageCounts = FUNNEL_STAGES.map(stage => {
-        return users.filter(u => FUNNEL_STAGES.indexOf(u.last_completed_step) >= FUNNEL_STAGES.indexOf(stage)).length;
-    });
-
+    const stageCounts = FUNNEL_STAGES.map(stage => users.filter(u => FUNNEL_STAGES.indexOf(u.last_completed_step) >= FUNNEL_STAGES.indexOf(stage)).length);
     const dailyData = processDailyData(users);
     const preferenceData = processPreferenceData(users);
 
@@ -88,6 +79,7 @@ function renderAnalytics(users) {
 }
 
 function renderUserList(usersToRender) {
+    currentlyDisplayedUsers = usersToRender;
     userTableBody.innerHTML = '';
     if (usersToRender.length === 0) {
         const message = allUsers.length > 0 ? "No users match your search or filter." : "No permanent user data yet.";
@@ -184,12 +176,9 @@ function renderStatusChart(completed, inProgress) {
 function renderFunnelChart(data) {
     const options = { ...apexChartOptions, series: [{ name: 'Users', data }],
         chart: { type: 'bar', height: 350, events: { dataPointSelection: (event, chartContext, config) => {
-            const stageIndex = config.dataPointIndex;
-            const clickedStage = FUNNEL_STAGES[stageIndex];
-            const filteredUsers = allUsers.filter(user => user.last_completed_step === clickedStage);
-            renderUserList(filteredUsers);
-            searchBox.value = `Filter: Users who stopped at "${clickedStage}"`;
-            switchToView('users');
+            const clickedStage = FUNNEL_STAGES[config.dataPointIndex];
+            const filterTag = `Filter: Users who stopped at "${clickedStage}"`;
+            applyFilterAndSwitchView(filterTag);
         }}},
         plotOptions: { bar: { borderRadius: 4, horizontal: false, columnWidth: '50%' } },
         colors: ['#00c6ff'], grid: { borderColor: 'var(--border-color)' },
@@ -209,10 +198,8 @@ function renderDailyActivityChart(labels, data) {
     const options = { ...apexChartOptions, series: [{ name: 'Active Users', data }],
         chart: { type: 'area', height: 350, zoom: { enabled: false }, events: { dataPointSelection: (event, chartContext, config) => {
             const clickedDate = labels[config.dataPointIndex];
-            const filteredUsers = allUsers.filter(user => formatDate(user.last_update_time) === clickedDate);
-            renderUserList(filteredUsers);
-            searchBox.value = `Filter: Users active on "${clickedDate}"`;
-            switchToView('users');
+            const filterTag = `Filter: Users active on "${clickedDate}"`;
+            applyFilterAndSwitchView(filterTag);
         }}},
         dataLabels: { enabled: false }, stroke: { curve: 'smooth' },
         colors: ['#39ff14'], grid: { borderColor: 'var(--border-color)' },
@@ -225,14 +212,12 @@ function renderDailyActivityChart(labels, data) {
 function renderPreferenceChart(labels, data) {
     const options = { ...apexChartOptions, series: data,
         chart: { type: 'donut', height: 350, events: { dataPointSelection: (event, chartContext, config) => {
-            const preference = labels[config.dataPointIndex].toLowerCase();
-            const filteredUsers = allUsers.filter(user => user.preference === preference);
-            renderUserList(filteredUsers);
-            searchBox.value = `Filter: Users who chose "${preference}"`;
-            switchToView('users');
+            const preference = labels[config.dataPointIndex];
+            const filterTag = `Filter: Users who chose "${preference}"`;
+            applyFilterAndSwitchView(filterTag);
         }}},
         labels: labels,
-        colors: ['#25D366', '#EA4335', 'var(--accent-purple)'],
+        colors: ['#25D366', 'var(--brand-blue)', 'var(--accent-purple)'],
         legend: { position: 'bottom' },
         plotOptions: { pie: { donut: { size: '65%' } } }
     };
@@ -247,18 +232,71 @@ function switchToView(viewName) {
     navUsersBtn.classList.toggle('active', viewName === 'users');
 }
 
+// THIS IS THE FINAL, ROBUST FILTER FUNCTION
 function filterUsers(searchTerm) {
     const term = searchTerm.toLowerCase();
     if (term.startsWith("filter:")) {
-        const filterType = term.includes('stopped at') ? 'stage' : term.includes('active on') ? 'date' : 'preference';
-        const filterValue = term.substring(term.indexOf('"') + 1, term.lastIndexOf('"'));
-        if (filterType === 'stage') { return allUsers.filter(user => user.last_completed_step === filterValue); }
-        else if (filterType === 'date') { return allUsers.filter(user => formatDate(user.last_update_time) === filterValue); }
-        else if (filterType === 'preference') { return allUsers.filter(user => user.preference === filterValue); }
+        const filterValue = term.substring(term.indexOf('"') + 1, term.lastIndexOf('"')).toLowerCase();
+        
+        if (term.includes('stopped at')) {
+            return allUsers.filter(user => user.last_completed_step && user.last_completed_step.toLowerCase() === filterValue);
+        } else if (term.includes('active on')) {
+            return allUsers.filter(user => formatDate(user.last_update_time) === filterValue);
+        } else if (term.includes('who chose')) {
+            return allUsers.filter(user => user.preference && user.preference.toLowerCase() === filterValue);
+        }
     }
+    // Standard text search
     return allUsers.filter(user => Object.values(user).some(val => String(val).toLowerCase().includes(term)));
 }
 
+// Helper function to apply a filter and switch views
+function applyFilterAndSwitchView(filterTag) {
+    searchBox.value = filterTag;
+    renderUserList(filterUsers(filterTag));
+    switchToView('users');
+}
+
+function downloadAsCsv() {
+    if (currentlyDisplayedUsers.length === 0) {
+        alert("No data to download.");
+        return;
+    }
+    const headers = ["User ID", "ID Number", "Full Name", "Email", "Phone Number", "Preferred Channel", "Status", "Furthest Step"];
+    const csvRows = [headers.join(',')];
+    currentlyDisplayedUsers.forEach(user => {
+        const row = [
+            `"${user.id || ''}"`,
+            `"${user.id_number || ''}"`,
+            `"${user.full_name || ''}"`,
+            `"${user.email_address || ''}"`,
+            `"${user.phone_number || ''}"`,
+            `"${user.preference || ''}"`,
+            `"${user.status || ''}"`,
+            `"${user.last_completed_step || ''}"`
+        ];
+        csvRows.push(row.join(','));
+    });
+    const csvString = csvRows.join('\n');
+    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    let filename = 'User_Data.csv';
+    const searchTerm = searchBox.value;
+    if (searchTerm.startsWith("Filter:")) {
+        filename = searchTerm.replace('Filter: ', '').replace(/"/g, '') + '.csv';
+    } else if (searchTerm) {
+        filename = `Search_Results_for_${searchTerm}.csv`;
+    }
+    a.setAttribute('href', url);
+    a.setAttribute('download', filename.replace(/[\s/]/g, '_'));
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+// --- Attaching all event listeners ---
 navAnalyticsBtn.addEventListener('click', () => switchToView('analytics'));
 navUsersBtn.addEventListener('click', () => {
     if (searchBox.value.startsWith("Filter:")) {
@@ -268,6 +306,7 @@ navUsersBtn.addEventListener('click', () => {
     switchToView('users');
 });
 searchBox.addEventListener('input', (e) => renderUserList(filterUsers(e.target.value)));
+downloadCsvBtn.addEventListener('click', downloadAsCsv);
 userTableBody.addEventListener('click', (e) => {
     const mainRow = e.target.closest('.main-row');
     if (mainRow) {

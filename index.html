@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -21,7 +20,7 @@
     <div class="dashboard-layout">
         <aside class="sidebar">
             <div class="sidebar-header">
-                <h1>IDH<span>Analytics</span></h1>
+                <h1>IDH<span>Command</span></h1>
             </div>
             <nav class="sidebar-nav">
                 <button id="nav-analytics" class="active">
@@ -67,7 +66,6 @@
                         <h2>Conversion Funnel</h2>
                         <div id="funnel-chart"></div>
                     </div>
-                    <!-- NEW PIE CHART CONTAINER -->
                     <div class="chart-container-full">
                         <h2>Communication Preference</h2>
                         <div id="preference-pie-chart"></div>
@@ -78,7 +76,13 @@
             <div id="user-list-view" class="view">
                  <div class="main-header">
                     <h2>User Journey Records</h2>
-                    <input type="search" id="search-box" class="search-box" placeholder="Search by any user data...">
+                    <div class="toolbar-actions">
+                        <input type="search" id="search-box" class="search-box" placeholder="Search by any user data...">
+                        <button id="download-csv-btn" class="action-btn">
+                            <svg viewBox="0 0 24 24"><path d="M19,9h-4V3H9v6H5l7,7L19,9z M5,18v2h14v-2H5z"></path></svg>
+                            <span>Download CSV</span>
+                        </button>
+                    </div>
                 </div>
                 <div class="table-container">
                     <table>
